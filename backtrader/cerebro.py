@@ -306,6 +306,7 @@ class Cerebro(with_metaclass(MetaParams, object)):
         self.storecbs = list()
         self.datacbs = list()
         self.signals = list()
+        self.listeners = list()
         self._signal_strat = (None, None, None)
         self._signal_concurrent = False
         self._signal_accumulate = False
@@ -614,6 +615,9 @@ class Cerebro(with_metaclass(MetaParams, object)):
         ``run`` time in cerebro
         '''
         self.writers.append((wrtcls, args, kwargs))
+
+    def addlistener(self, lstcls, *args, **kwargs):
+        self.listeners.append((lstcls, args, kwargs))
 
     def addsizer(self, sizercls, *args, **kwargs):
         '''Adds a ``Sizer`` class (and args) which is the default sizer for any
@@ -1074,6 +1078,7 @@ class Cerebro(with_metaclass(MetaParams, object)):
             self._dopreload = False
 
         self.runwriters = list()
+        self.runlisteners = list()
 
         # Add the system default writer if requested
         if self.p.writer is True:
@@ -1084,6 +1089,10 @@ class Cerebro(with_metaclass(MetaParams, object)):
         for wrcls, wrargs, wrkwargs in self.writers:
             wr = wrcls(*wrargs, **wrkwargs)
             self.runwriters.append(wr)
+
+        for lstcls, lstargs, lstkwargs in self.listeners:
+            wr = lstcls(*lstargs, **lstkwargs)
+            self.runlisteners.append(wr)
 
         # Write down if any writer wants the full csv output
         self.writers_csv = any(map(lambda x: x.p.csv, self.runwriters))
@@ -1274,6 +1283,9 @@ class Cerebro(with_metaclass(MetaParams, object)):
             for writer in self.runwriters:
                 writer.start()
 
+            for listener in self.runlisteners:
+                listener.start(self)
+
             # Prepare timers
             self._timers = []
             self._timerscheat = []
@@ -1325,7 +1337,8 @@ class Cerebro(with_metaclass(MetaParams, object)):
                         if attrname.startswith('data'):
                             setattr(a, attrname, None)
 
-                oreturn = OptReturn(strat.params, analyzers=strat.analyzers, strategycls=type(strat))
+                oreturn = OptReturn(
+                    strat.params, analyzers=strat.analyzers, strategycls=type(strat))
                 results.append(oreturn)
 
             return results
@@ -1351,6 +1364,9 @@ class Cerebro(with_metaclass(MetaParams, object)):
         for writer in self.runwriters:
             writer.writedict(dict(Cerebro=cerebroinfo))
             writer.stop()
+
+        for listener in self.runlisteners:
+            listener.stop()
 
     def _brokernotify(self):
         '''
@@ -1485,6 +1501,13 @@ class Cerebro(with_metaclass(MetaParams, object)):
                     writer.addvalues(wvalues)
 
                     writer.next()
+
+    def _next_listeners(self):
+        if not self.runlisteners:
+            return
+
+        for listener in self.runlisteners:
+            listener.next()
 
     def _disable_runonce(self):
         '''API for lineiterators to disable runonce (see HeikinAshi)'''
@@ -1632,6 +1655,7 @@ class Cerebro(with_metaclass(MetaParams, object)):
                         return
 
                     self._next_writers(runstrats)
+                self._next_listeners()
 
         # Last notification chance before stopping
         self._datanotify()
